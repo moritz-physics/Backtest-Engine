@@ -157,6 +157,99 @@ class TestMismatchedIndex:
             run_backtest(signal, returns)
 
 
+class TestCashRateFlatPosition:
+    def test_flat_earns_cash(self):
+        """When position=0, strategy return = cash_rate each day."""
+        n = 10
+        idx = _make_index(n)
+        rng = np.random.default_rng(42)
+        returns = pd.DataFrame({"A": rng.normal(0.001, 0.01, n)}, index=idx)
+        signal = pd.DataFrame({"A": 0.0}, index=idx)
+
+        # 5% annual, simple daily = 0.05/252
+        daily_rf = 0.05 / 252
+        cash_rate = pd.Series(daily_rf, index=idx)
+
+        result = run_backtest(signal, returns, signal_lag=1,
+                              cash_rate=cash_rate)
+
+        # position=0 everywhere after shift, so:
+        # gross = 0 * return + (1 - 0) * cash_rate = cash_rate
+        expected = np.full(n, daily_rf)
+        np.testing.assert_array_almost_equal(
+            result.portfolio_gross_returns.values, expected
+        )
+
+
+class TestCashRateFullPosition:
+    def test_fully_invested_no_cash(self):
+        """When position=1, strategy return = asset return (no cash)."""
+        n = 6
+        idx = _make_index(n)
+        daily_ret = 0.01
+        returns = pd.DataFrame({"A": daily_ret}, index=idx)
+        signal = pd.DataFrame({"A": 1.0}, index=idx)
+
+        daily_rf = 0.05 / 252
+        cash_rate = pd.Series(daily_rf, index=idx)
+
+        result = run_backtest(signal, returns, signal_lag=1,
+                              cash_rate=cash_rate)
+
+        # After shift: positions = [0, 1, 1, 1, 1, 1]
+        # Day 0: pos=0 -> gross = 0*ret + 1*cash = cash
+        # Days 1-5: pos=1 -> gross = 1*ret + 0*cash = ret
+        assert result.portfolio_gross_returns.iloc[0] == pytest.approx(
+            daily_rf
+        )
+        for i in range(1, n):
+            assert result.portfolio_gross_returns.iloc[i] == pytest.approx(
+                daily_ret
+            )
+
+
+class TestCashRatePartialPosition:
+    def test_half_invested(self):
+        """position=0.5: return = 0.5*asset + 0.5*cash."""
+        n = 6
+        idx = _make_index(n)
+        daily_ret = 0.01
+        returns = pd.DataFrame({"A": daily_ret}, index=idx)
+        signal = pd.DataFrame({"A": 0.5}, index=idx)
+
+        daily_rf = 0.05 / 252
+        cash_rate = pd.Series(daily_rf, index=idx)
+
+        result = run_backtest(signal, returns, signal_lag=1,
+                              cash_rate=cash_rate)
+
+        # After shift: positions = [0, 0.5, 0.5, 0.5, 0.5, 0.5]
+        # Day 0: pos=0 -> 1.0 * cash
+        assert result.portfolio_gross_returns.iloc[0] == pytest.approx(
+            daily_rf
+        )
+        # Days 1-5: 0.5*ret + 0.5*cash
+        expected = 0.5 * daily_ret + 0.5 * daily_rf
+        for i in range(1, n):
+            assert result.portfolio_gross_returns.iloc[i] == pytest.approx(
+                expected
+            )
+
+
+class TestCashRateIndexMismatch:
+    def test_missing_dates_raises(self):
+        n = 10
+        idx = _make_index(n)
+        returns = pd.DataFrame({"A": 0.01}, index=idx)
+        signal = pd.DataFrame({"A": 1.0}, index=idx)
+
+        # Cash rate covers only first 5 days
+        cash_rate = pd.Series(0.0001, index=idx[:5])
+
+        with pytest.raises(ValueError, match="cash_rate index must contain"):
+            run_backtest(signal, returns, signal_lag=1, cash_rate=cash_rate)
+
+
 class TestSignalLagValidation:
     def test_lag_zero_raises(self):
         idx = _make_index(5)

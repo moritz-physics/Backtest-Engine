@@ -18,8 +18,11 @@ Returns convention
 The ``returns`` input **must be simple (arithmetic) returns**, not log
 returns.  The strategy return on day *t* is::
 
-    gross_t = position_t * return_t          (per asset)
+    gross_t = position_t * return_t + (1 - |position_t|) * cash_rate_t
     portfolio_gross_t = sum across assets
+
+When ``cash_rate`` is None, the second term is zero and the formula
+simplifies to ``position_t * return_t``.
 
 This is only correct for simple returns; log returns are not additive
 across assets weighted by position.
@@ -73,6 +76,7 @@ def run_backtest(
     returns: pd.DataFrame,
     cost_model: LinearCost | None = None,
     signal_lag: int = 1,
+    cash_rate: pd.Series | None = None,
 ) -> BacktestResult:
     """Run a vectorized backtest.
 
@@ -91,6 +95,19 @@ def run_backtest(
         Number of days to shift the signal forward.  Must be >= 1 to
         prevent look-ahead bias.  A lag of 1 means today's position
         was determined by yesterday's signal.
+    cash_rate : pd.Series or None, default None
+        Daily risk-free rate (already converted from annualized to
+        daily via :func:`~backtester.data.rates.to_daily_rate`).
+        When provided, uninvested capital earns this rate::
+
+            effective_return = position * asset_return
+                             + (1 - |position|) * cash_rate
+
+        For fully invested positions (|position| = 1), cash
+        contribution is zero.  For leveraged positions (|position| > 1),
+        the formula naturally yields zero or negative cash contribution
+        (borrowing cost).  The index of *cash_rate* must contain every
+        date in *returns*.index.
 
     Returns
     -------
@@ -99,8 +116,9 @@ def run_backtest(
     Raises
     ------
     ValueError
-        If ``signal_lag < 1``, indices/columns don't match, or NaN
-        appears in positions after the shift-and-fill.
+        If ``signal_lag < 1``, indices/columns don't match, cash_rate
+        index doesn't cover returns index, or NaN appears in positions
+        after the shift-and-fill.
     """
     # --- Validate signal_lag ---
     if signal_lag < 1:
@@ -108,6 +126,15 @@ def run_backtest(
             f"signal_lag must be >= 1 to prevent look-ahead bias, "
             f"got {signal_lag}"
         )
+
+    # --- Validate cash_rate alignment ---
+    if cash_rate is not None:
+        missing = returns.index.difference(cash_rate.index)
+        if len(missing) > 0:
+            raise ValueError(
+                "cash_rate index must contain every date in returns.index. "
+                f"Missing {len(missing)} dates, first: {missing[0]}."
+            )
 
     # --- Validate index and column alignment ---
     if not signal.index.equals(returns.index):
@@ -138,7 +165,15 @@ def run_backtest(
         )
 
     # --- Gross strategy returns ---
+    # For each asset: position * asset_return + (1 - |position|) * cash_rate
+    # When cash_rate is None, the cash term is zero.
     gross_returns = positions * returns
+    if cash_rate is not None:
+        cash_aligned = cash_rate.reindex(returns.index)
+        unused_capital = 1.0 - positions.abs()
+        # Broadcast the daily cash rate across all asset columns
+        cash_contribution = unused_capital.multiply(cash_aligned, axis=0)
+        gross_returns = gross_returns + cash_contribution
 
     # --- Transaction costs ---
     prev_positions = positions.shift(1).fillna(0.0)

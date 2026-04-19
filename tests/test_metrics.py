@@ -133,6 +133,23 @@ class TestHitRate:
         assert hit_rate(r) == pytest.approx(0.0)
 
 
+class TestSharpeWithSeriesRf:
+    def test_series_rf_matches_scalar_when_constant(self):
+        """A constant Series rf should give the same Sharpe as the
+        equivalent scalar (annualized) rf."""
+        rng = np.random.default_rng(99)
+        r = _make_series(list(rng.normal(0.001, 0.01, 100)))
+
+        scalar_rf = 0.05  # annualized
+        daily_rf = 0.05 / 252
+        series_rf = pd.Series(daily_rf, index=r.index)
+
+        sharpe_scalar = sharpe_ratio(r, rf=scalar_rf)
+        sharpe_series = sharpe_ratio(r, rf=series_rf)
+
+        assert sharpe_scalar == pytest.approx(sharpe_series, rel=1e-10)
+
+
 class TestCalmarRatio:
     def test_no_drawdown_returns_inf(self):
         r = _make_series([0.01] * 100)

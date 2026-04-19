@@ -100,7 +100,9 @@ def annualized_volatility(
 
 
 def sharpe_ratio(
-    r: pd.Series, rf: float = 0.0, periods_per_year: int = 252
+    r: pd.Series,
+    rf: float | pd.Series = 0.0,
+    periods_per_year: int = 252,
 ) -> float:
     """Annualized Sharpe ratio.
 
@@ -108,16 +110,19 @@ def sharpe_ratio(
 
         mean(r - rf_daily) / std(r - rf_daily, ddof=1) * sqrt(N)
 
-    where ``rf_daily = rf / N``.  The risk-free rate *rf* is passed as
-    an **annualized** rate and converted to a daily rate via simple
-    division (adequate for small rf).
+    The risk-free rate *rf* can be either:
+
+    - A **scalar** (annualized rate, e.g. 0.05 for 5%), which is
+      converted to a constant daily rate via ``rf / N``.
+    - A **pd.Series** of daily rates aligned to *r*'s index, used
+      directly as the daily risk-free rate (no further conversion).
 
     Parameters
     ----------
     r : pd.Series
         Daily simple returns.
-    rf : float, default 0.0
-        Annualized risk-free rate (e.g. 0.05 for 5%).
+    rf : float or pd.Series, default 0.0
+        Risk-free rate.  Scalar = annualized; Series = daily rates.
     periods_per_year : int, default 252
         Trading days per year.
 
@@ -128,7 +133,10 @@ def sharpe_ratio(
         ``-np.inf`` if mean excess return < 0 and std == 0,
         ``np.nan`` if both are zero.
     """
-    rf_daily = rf / periods_per_year
+    if isinstance(rf, pd.Series):
+        rf_daily = rf.reindex(r.index)
+    else:
+        rf_daily = rf / periods_per_year
     excess = r - rf_daily
     mu = excess.mean()
     sigma = excess.std(ddof=1)
@@ -144,7 +152,9 @@ def sharpe_ratio(
 
 
 def sortino_ratio(
-    r: pd.Series, rf: float = 0.0, periods_per_year: int = 252
+    r: pd.Series,
+    rf: float | pd.Series = 0.0,
+    periods_per_year: int = 252,
 ) -> float:
     """Annualized Sortino ratio.
 
@@ -162,12 +172,15 @@ def sortino_ratio(
     contribute zero to the sum (not excluded).  This is the more
     common convention (Sortino & van der Meer, 1991).
 
+    The risk-free rate *rf* can be either a scalar (annualized) or a
+    pd.Series of daily rates — same convention as :func:`sharpe_ratio`.
+
     Parameters
     ----------
     r : pd.Series
         Daily simple returns.
-    rf : float, default 0.0
-        Annualized risk-free rate.
+    rf : float or pd.Series, default 0.0
+        Risk-free rate.  Scalar = annualized; Series = daily rates.
     periods_per_year : int, default 252
         Trading days per year.
 
@@ -177,7 +190,10 @@ def sortino_ratio(
         ``np.inf`` / ``-np.inf`` / ``np.nan`` when downside deviation
         is zero (same convention as :func:`sharpe_ratio`).
     """
-    rf_daily = rf / periods_per_year
+    if isinstance(rf, pd.Series):
+        rf_daily = rf.reindex(r.index)
+    else:
+        rf_daily = rf / periods_per_year
     excess = r - rf_daily
     mu = excess.mean()
     downside = np.minimum(excess, 0.0)
