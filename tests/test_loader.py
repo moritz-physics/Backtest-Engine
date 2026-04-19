@@ -278,3 +278,4 @@ def test_nan_mid_series_raises():
     )
     with pytest.raises(ValueError, match="mid-series NaN"):
         to_returns(prices)
+
